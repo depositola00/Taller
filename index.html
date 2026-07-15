@@ -733,8 +733,18 @@ async function buildPdfBlob(){
 const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 let googleClientId = localStorage.getItem('gdrive_client_id') || '';
 let accessToken = null;
+let tokenExpiresAt = 0;
 let tokenClient = null;
 let pendingAfterAuth = null;
+
+// Recuperar un token todavía válido si la página se recarga en la misma sesión del navegador.
+try{
+  const cached = JSON.parse(sessionStorage.getItem('gdrive_token') || 'null');
+  if(cached && cached.token && cached.expiresAt > Date.now()){
+    accessToken = cached.token;
+    tokenExpiresAt = cached.expiresAt;
+  }
+}catch(e){ /* ignore */ }
 
 const settingsPanel = document.getElementById('settingsPanel');
 const googleClientIdInput = document.getElementById('googleClientIdInput');
@@ -771,6 +781,11 @@ function ensureTokenClient(){
       callback: (tokenResponse)=>{
         if(tokenResponse && tokenResponse.access_token){
           accessToken = tokenResponse.access_token;
+          const expiresInMs = (tokenResponse.expires_in ? Number(tokenResponse.expires_in) : 3500) * 1000;
+          tokenExpiresAt = Date.now() + expiresInMs;
+          try{
+            sessionStorage.setItem('gdrive_token', JSON.stringify({ token: accessToken, expiresAt: tokenExpiresAt }));
+          }catch(e){ /* ignore */ }
           if(pendingAfterAuth){
             const fn = pendingAfterAuth;
             pendingAfterAuth = null;
@@ -788,7 +803,7 @@ function ensureTokenClient(){
 function requestGoogleAuth(onSuccess){
   pendingAfterAuth = onSuccess;
   const client = ensureTokenClient();
-  client.requestAccessToken({ prompt: accessToken ? '' : 'consent' });
+  client.requestAccessToken({ prompt: '' });
 }
 
 function blobToBase64(blob){
@@ -859,6 +874,8 @@ async function uploadBlobToDrive(blob, fileName){
     console.error('Drive upload failed:', status, detailMsg, err);
     if(status === 401){
       accessToken = null;
+      tokenExpiresAt = 0;
+      try{ sessionStorage.removeItem('gdrive_token'); }catch(e){ /* ignore */ }
       throw new Error('EXPIRED_TOKEN');
     }
     const uploadErr = new Error('UPLOAD_FAILED');
@@ -904,7 +921,7 @@ async function saveToGoogleDrive(){
       }
     };
 
-    if(!accessToken){
+    if(!accessToken || Date.now() >= tokenExpiresAt){
       statusEl.textContent = 'Iniciá sesión con Google para continuar...';
       requestGoogleAuth(doUpload);
     } else {
