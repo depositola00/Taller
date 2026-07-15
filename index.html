@@ -847,12 +847,23 @@ async function uploadBlobToDrive(blob, fileName){
     return response.result;
   }catch(err){
     const status = err && err.status;
-    console.error('Drive upload failed:', status, err && (err.result || err.body || err));
+    let detailMsg = '';
+    try{
+      const body = err && (err.result || err.body);
+      if(body){
+        const parsed = typeof body === 'string' ? JSON.parse(body) : body;
+        detailMsg = (parsed.error && (parsed.error.message || parsed.error)) || '';
+      }
+    }catch(e){ /* ignore parse issues */ }
+    if(!detailMsg && err && err.message) detailMsg = err.message;
+    console.error('Drive upload failed:', status, detailMsg, err);
     if(status === 401){
       accessToken = null;
       throw new Error('EXPIRED_TOKEN');
     }
-    throw new Error('UPLOAD_FAILED');
+    const uploadErr = new Error('UPLOAD_FAILED');
+    uploadErr.detail = `(${status || 's/d'}) ${detailMsg || 'sin más detalle'}`;
+    throw uploadErr;
   }
 }
 
@@ -885,7 +896,8 @@ async function saveToGoogleDrive(){
           requestGoogleAuth(doUpload);
         } else {
           console.error(err);
-          statusEl.textContent = 'No se pudo subir el archivo a Google Drive. Probá de nuevo.';
+          const extra = err && err.detail ? ' Detalle: ' + err.detail : '';
+          statusEl.textContent = 'No se pudo subir el archivo a Google Drive. Probá de nuevo.' + extra;
         }
       }finally{
         btns.forEach(b=>{ b.disabled = false; b.textContent = b.dataset.prevText; });
