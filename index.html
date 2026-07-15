@@ -790,16 +790,37 @@ function requestGoogleAuth(onSuccess){
   client.requestAccessToken({ prompt: accessToken ? '' : 'consent' });
 }
 
+function blobToBase64(blob){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 async function uploadBlobToDrive(blob, fileName){
   const metadata = { name: fileName, mimeType: 'application/pdf' };
-  const form = new FormData();
-  form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-  form.append('file', blob);
+  const boundary = 'foo_bar_baz_' + Date.now();
+  const base64Data = await blobToBase64(blob);
+
+  const body =
+    `--${boundary}\r\n` +
+    `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+    JSON.stringify(metadata) + `\r\n` +
+    `--${boundary}\r\n` +
+    `Content-Type: application/pdf\r\n` +
+    `Content-Transfer-Encoding: base64\r\n\r\n` +
+    base64Data + `\r\n` +
+    `--${boundary}--`;
 
   const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink', {
     method: 'POST',
-    headers: { Authorization: 'Bearer ' + accessToken },
-    body: form
+    headers: {
+      Authorization: 'Bearer ' + accessToken,
+      'Content-Type': `multipart/related; boundary=${boundary}`
+    },
+    body
   });
 
   if(res.status === 401){
@@ -807,6 +828,9 @@ async function uploadBlobToDrive(blob, fileName){
     throw new Error('EXPIRED_TOKEN');
   }
   if(!res.ok){
+    let detail = '';
+    try{ detail = JSON.stringify(await res.json()); }catch(e){}
+    console.error('Drive upload failed:', res.status, detail);
     throw new Error('UPLOAD_FAILED');
   }
   return res.json();
